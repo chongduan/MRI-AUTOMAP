@@ -7,7 +7,7 @@ from scipy.io import loadmat
 from matplotlib import pyplot as plt
 
 
-def load_STONE_data(folder, n_cases, normalize=False, imrotate=False):
+def load_STONE_data(folder, n_cases, normalize=False, imrotate=False, motion=False):
     """
     """
     temp = loadmat(os.path.join(folder, 'Stone_all_crop_64'))['crop_data_resize']
@@ -35,21 +35,37 @@ def load_STONE_data(folder, n_cases, normalize=False, imrotate=False):
         for i in range(imgs):
             temp_image = np.squeeze(bigy[i,:,:])
             bigy_rot_all.append(temp_image) 
-            bigx_rot_all.append(create_x(temp_image, normalize=False))
+            bigx_rot_all.append(create_x(temp_image, motion))
             for angle in [45, 90, 135, 180, 225, 270]:
                 bigy_rot = im_rotate(temp_image, angle)
                 bigy_rot_all.append(bigy_rot)
-                bigx_rot_all.append(create_x(bigy_rot, normalize=False))
-                
-        return  np.asarray(np.squeeze(bigx_rot_all)), np.asarray(np.abs(bigy_rot_all))
-                
-                
+                bigx_rot_all.append(create_x(bigy_rot, motion))
+        
+        
+        bigx_rot_all = np.asarray(np.squeeze(bigx_rot_all))
+        bigy_rot_all = np.asarray(np.abs(bigy_rot_all))
+
+        # Pad bigy_rot_all if motion is included
+        if motion:
+            temp_bigy = bigy_rot_all.copy()
+            bigy_rot_all = np.zeros((temp_bigy.shape[0], 80, 80))
+            bigy_rot_all[:,8:72, 8:72] = temp_bigy
+        
+        return  bigx_rot_all, bigy_rot_all
+                            
     else:
-        bigx = np.empty((imgs, row, col, 2))
+        bigx = []
+        bigy = np.abs(bigy)
         for i in range(imgs):
-            bigx[i, :, :, :] = create_x(np.squeeze(bigy[i,:,:]), normalize=False)
-            # convert bigx from complex to abs values
-            bigy = np.abs(bigy)
+            bigx.append(create_x(np.squeeze(bigy[i,:,:]), motion))
+
+        bigx = np.asarray(np.squeeze(bigx))
+        
+        # Pad bigy if motion is included
+        if motion:
+            temp_bigy = bigy.copy()
+            bigy = np.zeros((temp_bigy.shape[0], 80, 80))
+            bigy[:,8:72, 8:72] = temp_bigy        
         
         return bigx, bigy
     
@@ -151,7 +167,54 @@ def load_images_from_folder(folder, n_cases, normalize=False, imrotate=False):
     return bigx, bigy
 
 
-def create_x(y, normalize=False):
+def create_x_motion(y, normalize=False):
+    """
+    Prepares frequency data from image data: first image y is padded by 8
+    pixels of value zero from each side (y_pad_loc1), then second image is
+    created by moving the input image (64x64) 8 pixels down -> two same images
+    at different locations are created; then both images are transformed to
+    frequency space and their frequency space is combined as if the image
+    moved half-way through the acquisition (upper part of freq space from one
+    image and lower part of freq space from another image)
+    expands the dimensions from 3D to 4D, and normalizes if normalize=True
+    :param y: input image
+    :param normalize: if True - the frequency data will be normalized
+    :return: "Motion corrupted" frequency-space data of the input image,
+    4D array of size (1, im_size1, im_size2, 2), third dimension (size: 2)
+    contains real and imaginary part
+    """
+
+    # Pad y and move 8 pixels
+    y_pad_loc1 = np.zeros((80, 80))
+    y_pad_loc2 = np.zeros((80, 80))
+    y_pad_loc1[8:72, 8:72] = y
+    y_pad_loc2[0:64, 8:72] = y
+
+    # FFT of both images
+    img_f1 = np.fft.fft2(y_pad_loc1)  # FFT
+    img_fshift1 = np.fft.fftshift(img_f1)  # FFT shift
+    img_f2 = np.fft.fft2(y_pad_loc2)  # FFT
+    img_fshift2 = np.fft.fftshift(img_f2)  # FFT shift
+
+    # Combine halfs of both k-space - as if subject moved 8 pixels in the
+    # middle of acquisition
+    x_compl = np.zeros((80, 80), dtype=np.complex_)
+    x_compl[0:41, :] = img_fshift1[0:41, :]
+    x_compl[41:81, :] = img_fshift2[41:81, :]
+
+    # Finally, separate into real and imaginary channels
+    x_real = x_compl.real
+    x_imag = x_compl.imag
+    x = np.dstack((x_real, x_imag))
+
+    x = np.expand_dims(x, axis=0)
+
+    if normalize:
+        x = x - np.mean(x)
+
+    return x
+
+def create_x(y, motion=False):
     """
     Prepares frequency data from image data: applies to_freq_space,
     expands the dimensions from 3D to 4D, and normalizes if normalize=True
@@ -159,10 +222,35 @@ def create_x(y, normalize=False):
     :param normalize: if True - the frequency data will be normalized
     :return: frequency data 4D array of size (1, im_size1, im_size2, 2)
     """
-    x = to_freq_space(y)  # FFT: (128, 128, 2)
-    x = np.expand_dims(x, axis=0)  # (1, 128, 128, 2)
-    if normalize:
-        x = x - np.mean(x)
+    
+    if motion:
+        # Pad y and move 8 pixels
+        y_pad_loc1 = np.zeros((80, 80))
+        y_pad_loc2 = np.zeros((80, 80))
+        y_pad_loc1[8:72, 8:72] = y
+        y_pad_loc2[0:64, 8:72] = y
+        
+        # FFT of both images
+        img_f1 = np.fft.fft2(y_pad_loc1)  # FFT
+        img_fshift1 = np.fft.fftshift(img_f1)  # FFT shift
+        img_f2 = np.fft.fft2(y_pad_loc2)  # FFT
+        img_fshift2 = np.fft.fftshift(img_f2)  # FFT shift
+        
+        # Combine halfs of both k-space - as if subject moved 8 pixels in the
+        # middle of acquisition
+        x_compl = np.zeros((80, 80), dtype=np.complex_)
+        x_compl[0:41, :] = img_fshift1[0:41, :]
+        x_compl[41:81, :] = img_fshift2[41:81, :]
+        
+        # Finally, separate into real and imaginary channels
+        x_real = x_compl.real
+        x_imag = x_compl.imag
+        x = np.dstack((x_real, x_imag))
+        
+        x = np.expand_dims(x, axis=0)
+    else: 
+        x = to_freq_space(y)
+        x = np.expand_dims(x, axis=0)
 
     return x
 

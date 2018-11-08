@@ -1,7 +1,7 @@
 import numpy as np
 import cv2
 import os
-#from matplotlib import pyplot as plt
+from matplotlib import pyplot as plt
 
 
 def load_images_from_folder(folder, n_im, normalize=False, imrotate=False):
@@ -126,9 +126,7 @@ def im_rotate(img, angle):
     return imrotated
 
 
-'''
 # For debugging: show the images and their frequency space
-
 dir_temp = 'path to folder with images'
 X, Y = load_images_from_folder(dir_temp, 5, normalize=False, imrotate=True)
 
@@ -186,4 +184,3 @@ plt.title('X_rot2'), plt.xticks([]), plt.yticks([])
 plt.subplot(224), plt.imshow(img_artif_M3, cmap='gray')
 plt.title('X_rot3'), plt.xticks([]), plt.yticks([])
 plt.show()
-'''

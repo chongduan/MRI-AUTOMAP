@@ -11,28 +11,24 @@ from tensorflow.python.framework import ops
 import math
 import time
 import matplotlib.pyplot as plt
-from generate_input import load_images_from_folder, load_STONE_data
+from generate_input import load_STONE_data
 
 
 # Load training data, cropped and resized from MATLAB
 tic1 = time.time()
 # Folder with images
-dir_train = "/home/cduan/Documents/Dataset"  
+dir_train = "/home/chongduan/Documents/Automap-MRI/Datasett"
 n_cases = (0,3) # load 70 cases
 X_train, Y_train = load_STONE_data(  # Load images for training
     dir_train,
     n_cases,
     normalize=True,
-    imrotate=True)
+    imrotate=True,
+    motion=True)
 toc1 = time.time()
 print('Time to load data = ', (toc1 - tic1))
 print('X_train.shape at input = ', X_train.shape)
 print('Y_train.shape at input = ', Y_train.shape)
-
-
-## Reduce precision point
-#X_train = X_train.astype(np.float32)
-#Y_train = Y_train.astype(np.float32)
 
 
 def create_placeholders(n_H0, n_W0):
@@ -356,7 +352,7 @@ def model(X_train, Y_train, learning_rate=0.0001,
                     print ('EPOCH = ', epoch, 'COST = ', minibatch_cost, 'Elapsed time = ', (toc - tic))
                     
                 if (epoch + 1) % 100 == 0:
-                    save_path = saver.save(sess, './checkpoints_test/model.ckpt', global_step = my_global_step)
+                    save_path = saver.save(sess, '../checkpoints/model.ckpt', global_step = my_global_step)
                     print("Model saved in file: %s" % save_path)
 
 
