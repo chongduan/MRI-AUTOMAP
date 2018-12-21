@@ -1,48 +1,22 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Created on Mon Nov  5 13:04:46 2018
-
-@author: cduan
-"""
 import numpy as np
 import tensorflow as tf
 from tensorflow.python.framework import ops
 from matplotlib import pyplot as plt
-from generate_input import load_images_from_folder,load_STONE_data
-#from generate_input_motion import load_images_from_folder
-
-## Load development/test data:
-#dir_dev = "/home/chongduan/Documents/6_DeepLearning_CMR-FT_Strain/Deep-MRI-Reconstruction-master/load_raw_T1_Map_data/sense_recon"
-##n_im_dev = 60  # How many images to load
-## Load images and create motion-corrupted frequency space
-## No normalization or rotations:
-#n_cases = (0,1)  # load image data from 0 to 2 
-#X_dev, Y_dev = load_images_from_folder(  # Load images for training
-#    dir_dev,
-#    n_cases,
-#    normalize=False,
-#    imrotate=False)
-#print('X_dev.shape at input = ', X_dev.shape)
-#print('Y_dev.shape at input = ', Y_dev.shape)
+from generate_input_motion import load_images_from_folder
 
 
-# Load training data, cropped and resized from MATLAB
-# Folder with images
-dir_train = "/home/cduan/Documents/Dataset"   
-n_cases = (76,77) # load 3 cases
-X_dev, Y_dev = load_STONE_data(  # Load images for training
-    dir_train,
-    n_cases,
-    normalize=True,
+# Load development/test data:
+dir_dev = "path to the folder with dev/test images"
+n_im_dev = 60  # How many images to load
+# Load images and create motion-corrupted frequency space
+# No normalization or rotations:
+X_dev, Y_dev = load_images_from_folder(  # Load images for evaluating model
+    dir_dev,
+    n_im_dev,
+    normalize=False,
     imrotate=False)
 print('X_dev.shape at input = ', X_dev.shape)
 print('Y_dev.shape at input = ', Y_dev.shape)
-
-
-## Reduce precision point
-#X_dev = X_dev.astype(np.float32)
-#Y_dev = Y_dev.astype(np.float32)
 
 
 def create_placeholders(n_H0, n_W0):
@@ -70,9 +44,9 @@ def initialize_parameters():
     W2 = tf.get_variable("W2", [5, 5, 64, 64],  # 64 filters of size 5x5
                          initializer=tf.contrib.layers.xavier_initializer
                          (seed=0))
-    W3 = tf.get_variable("W3", [7, 7, 64, 1],  # 64 filters of size 7x7
+    W3 = tf.get_variable("W3", [7, 7, 1, 64],  # 64 filters of size 7x7
                          initializer=tf.contrib.layers.xavier_initializer
-                         (seed=0))  # set to std conv2d, Chong Duan
+                         (seed=0))  # conv2d_transpose
 
     parameters = {"W1": W1,
                   "W2": W2,
@@ -107,8 +81,7 @@ def forward_propagation(x, parameters):
         weights_regularizer=None,
         biases_initializer=None,
         biases_regularizer=None,
-#            reuse=True,
-        reuse = tf.AUTO_REUSE,
+        reuse=True,
         variables_collections=None,
         outputs_collections=None,
         trainable=True,
@@ -125,8 +98,7 @@ def forward_propagation(x, parameters):
         weights_regularizer=None,
         biases_initializer=None,
         biases_regularizer=None,
-#            reuse=True,
-        reuse = tf.AUTO_REUSE,
+        reuse=True,
         variables_collections=None,
         outputs_collections=None,
         trainable=True,
@@ -152,43 +124,13 @@ def forward_propagation(x, parameters):
     # RELU
     CONV2 = tf.nn.relu(Z2)
 
-#    # DE-CONV2D: filters W3, stride 1, padding 'SAME'
-#    # Input size (n_im, n_H0, n_W0, 64), output size (n_im, n_H0, n_W0, 1)
-#    batch_size = tf.shape(x)[0]
-#    deconv_shape = tf.stack([batch_size, x.shape[1], x.shape[2], 1])
-#    DECONV = tf.nn.conv2d_transpose(CONV2, W3, output_shape=deconv_shape,
-#                                    strides=[1, 1, 1, 1], padding='SAME')
-    
-#    # Use conv for the last layer, Chong Duan
-#    Z2 = tf.nn.conv2d(CONV2, W3, strides=[1, 1, 1, 1], padding='SAME')
-#    # RELU
-#    CONV3 = tf.nn.relu(Z2)
-    
-    
-    # Apply L1-norm on last hidden layer to the activation as described in the paper
-    CONV3 = tf.layers.conv2d(
-        CONV2,
-        filters=1,
-        kernel_size=7,
-        strides=(1, 1),
-        padding='same',
-        data_format='channels_last',
-        dilation_rate=(1, 1),
-        activation=tf.nn.relu,
-        use_bias=True,
-        kernel_initializer=None,
-        bias_initializer=tf.zeros_initializer(),
-        kernel_regularizer=None,
-        bias_regularizer=None,
-#        activity_regularizer = None,
-        activity_regularizer=tf.contrib.layers.l1_regularizer(0.0001),
-        kernel_constraint=None,
-        bias_constraint=None,
-        trainable=True,
-        name='conv3',
-        reuse=tf.AUTO_REUSE)
-    
-    DECONV = tf.squeeze(CONV3)
+    # DE-CONV2D: filters W3, stride 1, padding 'SAME'
+    # Input size (n_im, n_H0, n_W0, 64), output size (n_im, n_H0, n_W0, 1)
+    batch_size = tf.shape(x)[0]
+    deconv_shape = tf.stack([batch_size, x.shape[1], x.shape[2], 1])
+    DECONV = tf.nn.conv2d_transpose(CONV2, W3, output_shape=deconv_shape,
+                                    strides=[1, 1, 1, 1], padding='SAME')
+    DECONV = tf.squeeze(DECONV)
 
     return DECONV
 
@@ -198,35 +140,33 @@ def model(X_dev):
     :param X_dev: input development frequency-space data
     :return: returns the image, reconstructed using a trained model
     """
-    with tf.device('/cpu:0'):
-        ops.reset_default_graph()  # to not overwrite tf variables
-        (_, n_H0, n_W0, _) = X_dev.shape
-    
-        # Create Placeholders
-        X, Y = create_placeholders(n_H0, n_W0)
-    
-        # Initialize parameters
-        parameters = initialize_parameters()
-    
-        # Build the forward propagation in the tf graph
-        forward_propagation(X, parameters)
-        
-        # Add ops to save and restore all the variables
-        saver = tf.train.Saver()
-    
-        # Start the session to compute the tf graph
-        with tf.Session() as sess:
-            
-            # Chong Duan
-            ckpt = tf.train.get_checkpoint_state('./checkpoints/')
-            saver.restore(sess, ckpt.model_checkpoint_path)
 
-            print("Model restored")
-    
-            Y_recon_temp = forward_propagation(X, parameters)
-            Y_recon = Y_recon_temp.eval({X: X_dev})
-    
-        return parameters, Y_recon
+    ops.reset_default_graph()  # to not overwrite tf variables
+    (_, n_H0, n_W0, _) = X_dev.shape
+
+    # Create Placeholders
+    X, Y = create_placeholders(n_H0, n_W0)
+
+    # Initialize parameters
+    parameters = initialize_parameters()
+
+    # Build the forward propagation in the tf graph
+    forward_propagation(X, parameters)
+
+    # Add ops to save and restore all the variables
+    saver = tf.train.Saver()
+
+    # Start the session to compute the tf graph
+    with tf.Session() as sess:
+
+        saver.restore(sess, "path to saved model/model_name.ckpt")
+
+        print("Model restored")
+
+        Y_recon_temp = forward_propagation(X, parameters)
+        Y_recon = Y_recon_temp.eval({X: X_dev})
+
+    return parameters, Y_recon
 
 
 # Reconstruct the image using trained model
@@ -237,10 +177,10 @@ print('Y_dev.shape = ', Y_dev.shape)
 
 # Visualize the images, their reconstruction using iFFT and using trained model
 # 4 images to visualize:
-im1 = 15
-im2 = 16
-im3 = 17
-im4 = 18
+im1 = 32
+im2 = 33
+im3 = 34
+im4 = 35
 
 # iFFT back to image from corrupted frequency space
 # Complex image from real and imaginary part
@@ -292,38 +232,7 @@ plt.subplot(3, 4, 11), plt.imshow(Y_recon[im3, :, :], cmap='gray')
 plt.title('Y_recon3'), plt.xticks([]), plt.yticks([])
 plt.subplot(3, 4, 12), plt.imshow(Y_recon[im4, :, :], cmap='gray')
 plt.title('Y_recon4'), plt.xticks([]), plt.yticks([])
-plt.subplots_adjust(hspace=0.3)
 plt.show()
 
-# Chong Duan - Display resutls
-# Show X - input k-space
-plt.subplot(341), plt.imshow(np.abs(X_dev_compl[im1, :, :]), cmap='gray')
-plt.title('Input-im1'), plt.xticks([]), plt.yticks([])
-plt.subplot(342), plt.imshow(np.abs(X_dev_compl[im2, :, :]), cmap='gray')
-plt.title('Input-im2'), plt.xticks([]), plt.yticks([])
-plt.subplot(343), plt.imshow(np.abs(X_dev_compl[im3, :, :]), cmap='gray')
-plt.title('Input-im3'), plt.xticks([]), plt.yticks([])
-plt.subplot(344), plt.imshow(np.abs(X_dev_compl[im4, :, :]), cmap='gray')
-plt.title('Input-im4'), plt.xticks([]), plt.yticks([])
 
-# Show images reconstructed using iFFT
-plt.subplot(345), plt.imshow(X_iFFT_M1, cmap='gray')
-plt.title('iFFT_im1'), plt.xticks([]), plt.yticks([])
-plt.subplot(346), plt.imshow(X_iFFT_M2, cmap='gray')
-plt.title('iFFT_im2'), plt.xticks([]), plt.yticks([])
-plt.subplot(347), plt.imshow(X_iFFT_M3, cmap='gray')
-plt.title('iFFT_im3'), plt.xticks([]), plt.yticks([])
-plt.subplot(348), plt.imshow(X_iFFT_M4, cmap='gray')
-plt.title('iFFT_im4'), plt.xticks([]), plt.yticks([])
 
-# Show images reconstructed using model
-plt.subplot(349), plt.imshow(Y_recon[im1, :, :], cmap='gray')
-plt.title('Output-im1'), plt.xticks([]), plt.yticks([])
-plt.subplot(3, 4, 10), plt.imshow(Y_recon[im2, :, :], cmap='gray')
-plt.title('Output-im2'), plt.xticks([]), plt.yticks([])
-plt.subplot(3, 4, 11), plt.imshow(Y_recon[im3, :, :], cmap='gray')
-plt.title('Output-im3'), plt.xticks([]), plt.yticks([])
-plt.subplot(3, 4, 12), plt.imshow(Y_recon[im4, :, :], cmap='gray')
-plt.title('Output-im4'), plt.xticks([]), plt.yticks([])
-plt.subplots_adjust(hspace=0.3)
-plt.show()
